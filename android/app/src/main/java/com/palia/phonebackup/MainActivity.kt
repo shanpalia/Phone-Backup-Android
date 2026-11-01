@@ -3,9 +3,11 @@ package com.palia.phonebackup
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -22,107 +24,250 @@ class MainActivity : AppCompatActivity() {
     private val roots = mutableListOf<DocumentFile>()
     private lateinit var foldersSummary: TextView
     private lateinit var connectionStatus: TextView
+    private lateinit var page: LinearLayout
+    private lateinit var pageScroll: ScrollView
     private var server: BackupServer? = null
     private var pairingCode = ""
+    private var selectedTab = "Home"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        restoreGrantedFolders()
         buildHomeScreen()
         refreshFolders()
+        // Android's own secure folder picker is shown on first launch.
+        val prefs = getSharedPreferences("phone_backup_setup", MODE_PRIVATE)
+        if (!prefs.getBoolean("folder_access_prompted", false)) {
+            prefs.edit().putBoolean("folder_access_prompted", true).apply()
+            page.post { if (roots.isEmpty()) pickFolder() }
+        }
     }
 
     private fun buildHomeScreen() {
-        val page = LinearLayout(this).apply {
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(24))
-            setBackgroundColor(0xFFF3FBF7.toInt())
+            setBackgroundColor(0xFFF4FAF7.toInt())
         }
-        val scroll = ScrollView(this).apply { addView(page) }
-        val brand = TextView(this).apply {
-            text = "☁  Phone Backup"
-            textSize = 29f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF087A50.toInt())
+        page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(22), dp(20), dp(24))
+        }
+        pageScroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(page)
+        }
+        root.addView(pageScroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-        }
-        val tagline = TextView(this).apply {
-            text = "Wi-Fi File Transfer & Full Backup\nBy PaliaAPK HUB"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF52645B.toInt())
-            setPadding(0, dp(8), 0, dp(22))
-        }
-        val intro = TextView(this).apply {
-            text = "Allow access to the folders you want to back up. Android will show its own secure folder picker; you choose exactly what Phone Backup can read."
-            textSize = 15f
-            setTextColor(0xFF24352D.toInt())
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setPadding(dp(6), dp(8), dp(6), dp(8))
             setBackgroundColor(0xFFFFFFFF.toInt())
+            elevation = dp(10).toFloat()
         }
-        val permissionTitle = sectionTitle("1. Folder permissions")
-        val permissionHelp = TextView(this).apply {
-            text = "No broad storage permission is requested. Tap Add folder and grant access in Android's system screen. You can add several folders, such as DCIM, Pictures, Movies, Download, Documents and Android/media (if Android allows it)."
-            textSize = 13f
-            setTextColor(0xFF52645B.toInt())
-            setPadding(dp(4), dp(8), dp(4), dp(12))
+        listOf("Home", "Folders", "Connect", "Settings").forEach { tab ->
+            val item = TextView(this).apply {
+                text = when (tab) {
+                    "Home" -> "⌂\nHome"
+                    "Folders" -> "▣\nFolders"
+                    "Connect" -> "⌁\nConnect"
+                    else -> "⚙\nSettings"
+                }
+                gravity = Gravity.CENTER
+                textSize = 12f
+                setPadding(dp(5), dp(5), dp(5), dp(5))
+                setOnClickListener { showTab(tab) }
+            }
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(54), 1f))
         }
-        val addFolder = actionButton("＋  Add folder") { pickFolder() }
+        root.addView(nav)
+        setContentView(root)
+        showTab("Home")
+    }
+
+    private fun showTab(tab: String) {
+        selectedTab = tab
+        page.removeAllViews()
+        when (tab) {
+            "Home" -> buildDashboard()
+            "Folders" -> buildFoldersPage()
+            "Connect" -> buildConnectPage()
+            else -> buildSettingsPage()
+        }
+        pageScroll.scrollTo(0, 0)
+    }
+
+    private fun buildDashboard() {
+        addBrandHeader()
+        addCard {
+            addText("Your phone, safely backed up", 20f, 0xFF173D2E.toInt(), true)
+            addText("Transfer selected folders to your Windows PC over the same Wi-Fi network.", 14f, 0xFF607168.toInt())
+            addText(if (roots.isEmpty()) "Setup needed · Select folders to begin" else "Ready · ${roots.size} folder(s) selected", 13f, 0xFF087A50.toInt(), true)
+        }
+        addSectionTitle("QUICK ACTIONS")
+        addActionButton("＋  Choose backup folders") { showTab("Folders") }
+        addActionButton("Start Wi-Fi sharing") { showTab("Connect"); if (roots.isNotEmpty()) startSharing() }
+        addSectionTitle("BACKUP OVERVIEW")
+        addInfoCard("Selected folders", if (roots.isEmpty()) "No folders selected yet" else roots.joinToString("  •  ") { it.name ?: "Folder" })
+        addInfoCard("Connection", if (server == null) "Not connected to your PC" else "Sharing is active")
+        addSmallNote("Only folders you select are shared. Android-protected app data and some system folders are not available to ordinary apps.")
+    }
+
+    private fun buildFoldersPage() {
+        addBrandHeader()
+        addText("Backup folders", 23f, 0xFF173D2E.toInt(), true)
+        addText("Choose the folders you want to copy. Android will open its official folder picker and ask you to grant access.", 14f, 0xFF607168.toInt())
+        addActionButton("＋  Add folder") { pickFolder() }
+        addInfoCard("Access granted", "")
         foldersSummary = TextView(this).apply {
             textSize = 14f
-            setTextColor(0xFF24352D.toInt())
+            setTextColor(0xFF29483A.toInt())
             setPadding(dp(14), dp(14), dp(14), dp(14))
-            setBackgroundColor(0xFFFFFFFF.toInt())
+            background = rounded(0xFFFFFFFF.toInt(), 16)
         }
-        val connectionTitle = sectionTitle("2. Connect to Windows PC")
-        val connectionHelp = TextView(this).apply {
-            text = "Connect the phone and PC to the same Wi-Fi or your phone's hotspot. Then start sharing and enter the address and pairing code in the Windows Phone Backup app."
-            textSize = 13f
-            setTextColor(0xFF52645B.toInt())
-            setPadding(dp(4), dp(8), dp(4), dp(12))
-        }
-        val start = actionButton("Start sharing") { startSharing() }
-        val stop = secondaryButton("Stop sharing") { stopSharing() }
+        page.addView(foldersSummary, matchWrap(dp(12)))
+        refreshFolders()
+        addSmallNote("Tip: You can add DCIM, Pictures, Movies, Download and Documents separately. Android may block protected folders.")
+    }
+
+    private fun buildConnectPage() {
+        addBrandHeader()
+        addText("Connect to Windows PC", 23f, 0xFF173D2E.toInt(), true)
+        addText("Keep your phone and PC on the same Wi-Fi network, or connect both to your phone's hotspot.", 14f, 0xFF607168.toInt())
+        addActionButton("Start sharing") { startSharing() }
+        addSecondaryButton("Stop sharing") { stopSharing() }
         connectionStatus = TextView(this).apply {
-            text = "Sharing is stopped"
             textSize = 14f
-            setTextColor(0xFF145B43.toInt())
+            setTextColor(0xFF20543E.toInt())
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = rounded(0xFFFFFFFF.toInt(), 16)
+        }
+        page.addView(connectionStatus, matchWrap(dp(14)))
+        refreshConnectionStatus()
+        addSmallNote("Enter the address and pairing code shown here in the Windows Phone Backup app. Keep the code private and stop sharing when finished.")
+    }
+
+    private fun buildSettingsPage() {
+        addBrandHeader()
+        addText("Settings & privacy", 23f, 0xFF173D2E.toInt(), true)
+        addInfoCard("App permissions", "Folder access is granted securely through Android's system folder picker. You can change access by adding folders here.")
+        addInfoCard("Network access", "Internet and network-state permissions are declared in AndroidManifest. Android does not show a runtime popup for these normal permissions.")
+        addInfoCard("Your privacy", "Only selected folders are shared while Wi-Fi sharing is running. The pairing code protects the transfer endpoints.")
+        addInfoCard("App version", "Phone Backup · By PaliaAPK HUB")
+    }
+
+    private fun addBrandHeader() {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(14), dp(14), dp(14))
-            setBackgroundColor(0xFFFFFFFF.toInt())
+            background = rounded(0xFFE0F4E9.toInt(), 18)
         }
-        val note = TextView(this).apply {
-            text = "Privacy note: only the folders you select are shared. Keep the pairing code private and stop sharing when your backup is finished. Android-protected app data and some system folders cannot be accessed by ordinary apps."
-            textSize = 12f
-            setTextColor(0xFF65766D.toInt())
-            setPadding(dp(4), dp(18), dp(4), 0)
+        val mark = TextView(this).apply {
+            text = "PB"
+            gravity = Gravity.CENTER
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFFFFFFFF.toInt())
+            background = rounded(0xFF087A50.toInt(), 14)
         }
-        listOf(brand, tagline, intro, permissionTitle, permissionHelp, addFolder, foldersSummary,
-            connectionTitle, connectionHelp, start, stop, connectionStatus, note).forEach {
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(10)
-            page.addView(it, lp)
+        header.addView(mark, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val labels = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, 0)
         }
-        setContentView(scroll)
+        labels.addView(makeText("Phone Backup", 20f, 0xFF087A50.toInt(), true))
+        labels.addView(makeText("BY PALIAAPK HUB", 10f, 0xFF607168.toInt(), true))
+        header.addView(labels)
+        page.addView(header, matchWrap(dp(18)))
     }
 
-    private fun sectionTitle(value: String) = TextView(this).apply {
-        text = value
-        textSize = 18f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(0xFF087A50.toInt())
-        setPadding(0, dp(20), 0, dp(2))
+    private fun addSectionTitle(value: String) {
+        page.addView(makeText(value, 12f, 0xFF087A50.toInt(), true), matchWrap(dp(8)))
     }
 
-    private fun actionButton(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        isAllCaps = false
-        textSize = 16f
-        setOnClickListener { action() }
+    private fun addText(value: String, size: Float, color: Int, bold: Boolean = false) {
+        page.addView(makeText(value, size, color, bold), matchWrap(dp(8)))
     }
 
-    private fun secondaryButton(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        isAllCaps = false
-        setOnClickListener { action() }
+    private fun makeText(value: String, size: Float, color: Int, bold: Boolean = false) =
+        TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) typeface = Typeface.DEFAULT_BOLD
+        }
+
+    private fun addCard(content: LinearLayout.() -> Unit) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = rounded(0xFFFFFFFF.toInt(), 18)
+            content()
+        }
+        page.addView(card, matchWrap(dp(14)))
+    }
+
+    private fun addInfoCard(title: String, value: String) {
+        addCard {
+            addView(makeText(title, 14f, 0xFF087A50.toInt(), true))
+            if (value.isNotBlank()) {
+                val detail = makeText(value, 13f, 0xFF52645B.toInt())
+                detail.setPadding(0, dp(6), 0, 0)
+                addView(detail)
+            }
+        }
+    }
+
+    private fun addActionButton(label: String, action: () -> Unit) {
+        val button = Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 15f
+            setTextColor(0xFFFFFFFF.toInt())
+            background = rounded(0xFF087A50.toInt(), 14)
+            setOnClickListener { action() }
+        }
+        page.addView(button, matchWrap(dp(10)))
+    }
+
+    private fun addSecondaryButton(label: String, action: () -> Unit) {
+        val button = Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 14f
+            setOnClickListener { action() }
+        }
+        page.addView(button, matchWrap(dp(10)))
+    }
+
+    private fun addSmallNote(value: String) {
+        val note = makeText(value, 12f, 0xFF718078.toInt())
+        note.setPadding(dp(4), dp(12), dp(4), dp(12))
+        page.addView(note, matchWrap())
+    }
+
+    private fun matchWrap(bottom: Int = 0) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+    ).apply { bottomMargin = bottom }
+
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    private fun restoreGrantedFolders() {
+        contentResolver.persistedUriPermissions
+            .filter { it.isReadPermission }
+            .forEach { permission ->
+                try {
+                    DocumentFile.fromTreeUri(this, permission.uri)?.let { folder ->
+                        if (roots.none { it.uri == folder.uri }) roots.add(folder)
+                    }
+                } catch (_: Exception) { }
+            }
     }
 
     private fun pickFolder() {
@@ -145,28 +290,38 @@ class MainActivity : AppCompatActivity() {
         val grantedFlags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         try {
             contentResolver.takePersistableUriPermission(uri, grantedFlags)
-        } catch (_: SecurityException) {
-            // Some document providers return a temporary grant only; use it for this app session.
-        }
+        } catch (_: SecurityException) { }
         val folder = DocumentFile.fromTreeUri(this, uri)
         if (folder != null && roots.none { it.uri == folder.uri }) {
             roots.add(folder)
             Toast.makeText(this, "Folder access granted: ${folder.name ?: "Selected folder"}", Toast.LENGTH_SHORT).show()
         }
         refreshFolders()
+        if (selectedTab == "Home") showTab("Home")
     }
 
     private fun refreshFolders() {
+        if (!::foldersSummary.isInitialized) return
         foldersSummary.text = if (roots.isEmpty()) {
-            "No folders selected yet. Add at least one folder to continue."
+            "No folders selected yet. Tap Add folder to grant access."
         } else {
-            "Access granted to ${roots.size} folder(s):\n" + roots.joinToString("\n") { "✓ ${it.name ?: "Folder"}" }
+            "Access granted to ${roots.size} folder(s):\n" + roots.joinToString("\n") { "✓  ${it.name ?: "Folder"}" }
+        }
+    }
+
+    private fun refreshConnectionStatus() {
+        if (!::connectionStatus.isInitialized) return
+        connectionStatus.text = if (server == null) {
+            "SHARING OFF\nStart sharing when you are ready to connect."
+        } else {
+            "SHARING ON\nAddress: http://${wifiIp()}:8765\nPort: 8765\nPairing code: $pairingCode\n\nKeep Phone Backup open while transferring."
         }
     }
 
     private fun startSharing() {
         if (roots.isEmpty()) {
-            Toast.makeText(this, "First tap Add folder and grant access", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "First choose a folder and grant Android access", Toast.LENGTH_LONG).show()
+            showTab("Folders")
             pickFolder()
             return
         }
@@ -174,17 +329,18 @@ class MainActivity : AppCompatActivity() {
             pairingCode = (100000 + SecureRandom().nextInt(900000)).toString()
             server?.stop()
             server = BackupServer(this, roots.toList(), pairingCode).also { it.start() }
-            val ip = wifiIp()
-            connectionStatus.text = "SHARING ON\nAddress: http://$ip:8765\nPort: 8765\nPairing code: $pairingCode\n\nKeep Phone Backup open while transferring."
+            refreshConnectionStatus()
+            Toast.makeText(this, "Wi-Fi sharing started", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            connectionStatus.text = "Could not start sharing: ${e.message}"
+            if (::connectionStatus.isInitialized) connectionStatus.text = "Could not start sharing: ${e.message}"
         }
     }
 
     private fun stopSharing() {
         server?.stop()
         server = null
-        connectionStatus.text = "Sharing is stopped"
+        if (::connectionStatus.isInitialized) refreshConnectionStatus()
+        Toast.makeText(this, "Sharing stopped", Toast.LENGTH_SHORT).show()
     }
 
     private fun wifiIp(): String {
