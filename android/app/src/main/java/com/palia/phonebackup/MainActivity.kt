@@ -29,18 +29,16 @@ class MainActivity : AppCompatActivity() {
     private var server: BackupServer? = null
     private var pairingCode = ""
     private var selectedTab = "Home"
+    private val navItems = mutableMapOf<String, TextView>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoreGrantedFolders()
         buildHomeScreen()
         refreshFolders()
-        // Android's own secure folder picker is shown on first launch.
-        val prefs = getSharedPreferences("phone_backup_setup", MODE_PRIVATE)
-        if (!prefs.getBoolean("folder_access_prompted", false)) {
-            prefs.edit().putBoolean("folder_access_prompted", true).apply()
-            page.post { if (roots.isEmpty()) pickFolder() }
-        }
+        window.navigationBarColor = android.graphics.Color.WHITE
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
     }
 
     private fun buildHomeScreen() {
@@ -67,6 +65,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(0xFFFFFFFF.toInt())
             elevation = dp(10).toFloat()
         }
+        navItems.clear()
         listOf("Home", "Folders", "Connect", "Settings").forEach { tab ->
             val item = TextView(this).apply {
                 text = when (tab) {
@@ -80,6 +79,7 @@ class MainActivity : AppCompatActivity() {
                 setPadding(dp(5), dp(5), dp(5), dp(5))
                 setOnClickListener { showTab(tab) }
             }
+            navItems[tab] = item
             nav.addView(item, LinearLayout.LayoutParams(0, dp(54), 1f))
         }
         root.addView(nav)
@@ -89,6 +89,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTab(tab: String) {
         selectedTab = tab
+        navItems.forEach { (name, item) -> item.setTextColor(if (name == tab) 0xFF087A50.toInt() else 0xFF9AA9A1.toInt()); item.typeface = if (name == tab) Typeface.DEFAULT_BOLD else Typeface.DEFAULT }
         page.removeAllViews()
         when (tab) {
             "Home" -> buildDashboard()
@@ -120,7 +121,6 @@ class MainActivity : AppCompatActivity() {
         addText("Backup folders", 23f, 0xFF173D2E.toInt(), true)
         addText("Choose the folders you want to copy. Android will open its official folder picker and ask you to grant access.", 14f, 0xFF607168.toInt())
         addActionButton("＋  Add folder") { pickFolder() }
-        addInfoCard("Access granted", "")
         foldersSummary = TextView(this).apply {
             textSize = 14f
             setTextColor(0xFF29483A.toInt())
